@@ -1,24 +1,26 @@
 //===========================================================================
 /*
-    CS277 - Experimental Haptics
-    Winter 2010, Stanford University
+    This file is part of the CHAI 3D visualization and haptics libraries.
+    Copyright (C) 2003-2010 by CHAI 3D. All rights reserved.
 
-    You may use this program as a boilerplate for starting your homework
-    assignments.  Use CMake (www.cmake.org) on the CMakeLists.txt file to
-    generate project files for the development tool of your choice.  The
-    CHAI3D library directory (chai3d-2.1.0) should be installed as a sibling
-    directory to the one containing this project.
+    This library is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License("GPL") version 2
+    as published by the Free Software Foundation.
 
-    These files are meant to be helpful should you encounter difficulties
-    setting up a working CHAI3D project.  However, you are not required to
-    use them for your homework -- you may start from anywhere you'd like.
+    For using the CHAI 3D libraries with software that can not be combined
+    with the GNU GPL, and for taking advantage of the additional benefits
+    of our support services, please contact CHAI 3D about acquiring a
+    Professional Edition License.
 
-    \author    Francois Conti & Sonny Chan
-    \date      January 2010
+    \author    <http://www.chai3d.org>
+    \author    Francois Conti
+    \version   2.1.0 $Rev: 322 $
 */
 //===========================================================================
 
 //---------------------------------------------------------------------------
+#include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,15 +33,12 @@
 //---------------------------------------------------------------------------
 
 // initial size (width/height) in pixels of the display window
-const int WINDOW_SIZE_W         = 600;
-const int WINDOW_SIZE_H         = 600;
+const int WINDOW_SIZE_W         = 512;
+const int WINDOW_SIZE_H         = 512;
 
 // mouse menu options (right button)
 const int OPTION_FULLSCREEN     = 1;
 const int OPTION_WINDOWDISPLAY  = 2;
-
-// maximum number of haptic devices supported in this demo
-const int MAX_DEVICES           = 8;
 
 
 //---------------------------------------------------------------------------
@@ -55,6 +54,9 @@ cCamera* camera;
 // a light source to illuminate the objects in the virtual scene
 cLight *light;
 
+// a little "chai3d" bitmap logo at the bottom of the screen
+cBitmap* logo;
+
 // width and height of the current window display
 int displayW  = 0;
 int displayH  = 0;
@@ -62,37 +64,42 @@ int displayH  = 0;
 // a haptic device handler
 cHapticDeviceHandler* handler;
 
-// a pointer to the first haptic device detected on this computer
-cGenericHapticDevice* hapticDevice = 0;
-
-// a 3D cursor for the haptic device
-cShapeSphere* cursor = 0;
-
-// a line to display velocity of the haptic interface
-cShapeLine* velocityVector;
-
-// labels to show haptic device position and update rate
-cLabel* positionLabel;
-cLabel* rateLabel;
-double rateEstimate = 0;
-
-// material properties used to render the color of the cursors
-cMaterial matCursorButtonON;
-cMaterial matCursorButtonOFF;
-
-// status of the main simulation haptics loop
-bool simulationRunning = false;
-
-// has exited haptics simulation thread
-bool simulationFinished = false;
-
-cMesh* object;
-int vertices[6][4];
-cTexture2D* texture;
+// a virtual tool representing the haptic device in the scene
 cGeneric3dofPointer* tool;
 
 // radius of the tool proxy
 double proxyRadius;
+
+// a virtual object
+cMesh* object;
+
+// a list of vertices for each face of the cube
+int vertices[6][4];
+
+// a texture
+cTexture2D* texture;
+
+// rotational velocity of the object
+cVector3d rotVel(0.0, 0.1, 0.1);
+
+// status of the main simulation haptics loop
+bool simulationRunning = false;
+
+// simulation clock
+cPrecisionClock simClock;
+
+// root resource path
+string resourceRoot;
+
+// has exited haptics simulation thread
+bool simulationFinished = false;
+
+//---------------------------------------------------------------------------
+// DECLARED MACROS
+//---------------------------------------------------------------------------
+// convert to resource path
+#define RESOURCE_PATH(p)    (char*)((resourceRoot+string(p)).c_str())
+
 
 //---------------------------------------------------------------------------
 // DECLARED FUNCTIONS
@@ -119,18 +126,14 @@ void updateHaptics(void);
 
 //===========================================================================
 /*
-    This application illustrates the use of the haptic device handler
-    "cHapticDevicehandler" to access haptic devices connected to the computer.
+    DEMO:    cubic.cpp
 
-    In this example the application opens an OpenGL window and displays a
-    3D cursor for the first device found. If the operator presses the device
-    user button, the color of the cursor changes accordingly.
-
-    In the main haptics loop function  "updateHaptics()" , the position and 
-    user switch status of the device are retrieved at each simulation iteration.
-    This information is then used to update the position and color of the
-    cursor. A force is then commanded to the haptic device to attract the 
-    end-effector towards the device origin.
+    This example illustrates how to build a small cube by assembling a
+    cloud of triangles together. The applications also presents the
+    use of texture properties by defining a texture image and defining
+    texture coordinates at each of the vertices of the object.
+    The texture image is produced and updated by copying the image
+    buffer of the virtual camera at each graphical rendering cycle.
 */
 //===========================================================================
 
@@ -142,10 +145,18 @@ int main(int argc, char* argv[])
 
     printf ("\n");
     printf ("-----------------------------------\n");
-    printf ("DH2660 - Haptics\n");
-    printf ("April 2014, KTH\n");
+    printf ("CHAI 3D\n");
+    printf ("Demo: 25-cubic\n");
+    printf ("Copyright 2003-2010\n");
     printf ("-----------------------------------\n");
     printf ("\n\n");
+    printf ("Keyboard Options:\n\n");
+    printf ("[x] - Exit application\n");
+    printf ("\n\n");
+
+    // parse first arg to try and locate resources
+    resourceRoot = string(argv[0]).substr(0,string(argv[0]).find_last_of("/\\")+1);
+
 
     //-----------------------------------------------------------------------
     // 3D - SCENEGRAPH
@@ -156,14 +167,14 @@ int main(int argc, char* argv[])
 
     // set the background color of the environment
     // the color is defined by its (R,G,B) components.
-    world->setBackgroundColor(0,1, 0);
+    world->setBackgroundColor(1.0, 0.0, 0.0);
 
     // create a camera and insert it into the virtual world
     camera = new cCamera(world);
     world->addChild(camera);
 
     // position and oriente the camera
-    camera->set( cVector3d (0.2, 0.0, 0.0),    // camera position (eye)
+    camera->set( cVector3d (3.0, 0.0, 0.0),    // camera position (eye)
                  cVector3d (0.0, 0.0, 0.0),    // lookat position (target)
                  cVector3d (0.0, 0.0, 1.0));   // direction of the "up" vector
 
@@ -178,13 +189,43 @@ int main(int argc, char* argv[])
     light->setPos(cVector3d( 2.0, 0.5, 1.0));  // position the light source
     light->setDir(cVector3d(-2.0, 0.5, 1.0));  // define the direction of the light beam
 
-    // create a label that shows the haptic loop update rate
-    rateLabel = new cLabel();
-    rateLabel->setPos(8, 24, 0);
-    camera->m_front_2Dscene.addChild(rateLabel);
 
+    //-----------------------------------------------------------------------
+    // 2D - WIDGETS
+    //-----------------------------------------------------------------------
 
+    // create a 2D bitmap logo
+    logo = new cBitmap();
 
+    // add logo to the front plane
+    camera->m_front_2Dscene.addChild(logo);
+
+    // load a "chai3d" bitmap image file
+    bool fileload;
+    fileload = logo->m_image.loadFromFile(RESOURCE_PATH("resources/images/chai3d-w.bmp"));
+    if (!fileload)
+    {
+        #if defined(_MSVC)
+        fileload = logo->m_image.loadFromFile("../../../bin/resources/images/chai3d-w.bmp");
+        #endif
+    }
+
+    // position the logo at the bottom left of the screen (pixel coordinates)
+    logo->setPos(10, 10, 0);
+
+    // scale the logo along its horizontal and vertical axis
+    logo->setZoomHV(0.25, 0.25);
+
+    // here we replace all wite pixels (1,1,1) of the logo bitmap
+    // with transparent black pixels (1, 1, 1, 0). This allows us to make
+    // the background of the logo look transparent.
+    logo->m_image.replace(
+                          cColorb(0xff, 0xff, 0xff),         // original RGB color
+                          cColorb(0xff, 0xff, 0xff, 0x00)    // new RGBA color
+                          );
+
+    // enable transparency
+    logo->enableTransparency(true);
 
 
     //-----------------------------------------------------------------------
@@ -194,212 +235,163 @@ int main(int argc, char* argv[])
     // create a haptic device handler
     handler = new cHapticDeviceHandler();
 
-    // read the number of haptic devices currently connected to the computer
-    int numHapticDevices = handler->getNumDevices();
+    // get access to the first available haptic device
+    cGenericHapticDevice* hapticDevice;
+    handler->getDevice(hapticDevice, 0);
 
-    // if there is at least one haptic device detected...
+    // retrieve information about the current haptic device
     cHapticDeviceInfo info;
-
-    if (numHapticDevices)
+    if (hapticDevice)
     {
-        // get a handle to the first haptic device
-        handler->getDevice(hapticDevice);
-
-        // open connection to haptic device
-        hapticDevice->open();
-
-		// initialize haptic device
-		hapticDevice->initialize();
-
-        // retrieve information about the current haptic device
         info = hapticDevice->getSpecifications();
-
-        // create a cursor with its radius set
-        cursor = new cShapeSphere(0.01);
-
-        // add cursor to the world
-        world->addChild(cursor);
-
-        // create a small line to illustrate velocity
-        velocityVector = new cShapeLine(cVector3d(0,0,0), cVector3d(0,0,0));
-
-        // add line to the world
-        world->addChild(velocityVector);
-	cShapeLine *rightLine = new cShapeLine(cVector3d(0, 0.02, 1),cVector3d(0, 0.02, -1));
-	cShapeLine *leftLine = new cShapeLine(cVector3d(0, -0.02, 1),cVector3d(0, -0.02, -1));
-	cShapeLine *topLine = new cShapeLine(cVector3d(0, -1, 0.02),cVector3d(0, 1, 0.02));
-	cShapeLine *bottomLine = new cShapeLine(cVector3d(0, -1, -0.02),cVector3d(0, 1, -0.02));
-        world->addChild(rightLine);
-        world->addChild(leftLine);
-        world->addChild(topLine);
-        world->addChild(bottomLine);
-        positionLabel = new cLabel();
-        positionLabel->setPos(8, 8, 0);
-        camera->m_front_2Dscene.addChild(positionLabel);
-
-	// connect the haptic device to the tool
-	tool->setHapticDevice(hapticDevice);
-
-	// initialize tool by connecting to haptic device
-	tool->start();
-
-	// map the physical workspace of the haptic device to a larger virtual workspace.
-	tool->setWorkspaceRadius(1.0);
-
-	// define a radius for the tool (graphical display)
-	tool->setRadius(0.05);
-
-	// hide the device sphere. only show proxy.
-	tool->m_deviceSphere->setShowEnabled(false);
-
-	// set the physical readius of the proxy.
-	proxyRadius = 0.05;
-	tool->m_proxyPointForceModel->setProxyRadius(proxyRadius);
-	tool->m_proxyPointForceModel->m_collisionSettings.m_checkBothSidesOfTriangles = false;
-
-	// enable if objects in the scene are going to rotate of translate
-	// or possibly collide against the tool. If the environment
-	// is entirely static, you can set this parameter to "false"
-	tool->m_proxyPointForceModel->m_useDynamicProxy = true;
-
-	// read the scale factor between the physical workspace of the haptic
-	// device and the virtual workspace defined for the tool
-	double workspaceScaleFactor = tool->getWorkspaceScaleFactor();
-
-	// define a maximum stiffness that can be handled by the current
-	// haptic device. The value is scaled to take into account the
-	// workspace scale factor
-	double stiffnessMax = info.m_maxForceStiffness / workspaceScaleFactor;
-
-
-	/*
-	  ODEWorld = new cODEWorld(world);
-	  world->addChild(ODEWorld);
-	  ODEWorld->setGravity(cVector3d(0.0, 0.0, -9.81));
-
-	  ODEBody0 = new cODEGenericBody(ODEWorld);
-	  // Cube
-
-	  cMaterial mat0;
-	  cMesh* object0 = new cMesh(world);
-	  double boxSize = 0.1;
-	  double stiffnessMax = 100.0;
-	  createCube(object0, boxSize);
-	  mat0.m_ambient.set(0.8, 0.1, 0.4);
-	  mat0.m_diffuse.set(1.0, 0.15, 0.5);
-	  mat0.m_specular.set(1.0, 0.2, 0.8);
-	  mat0.setStiffness(0.5 * stiffnessMax);
-	  mat0.setDynamicFriction(0.8);
-	  mat0.setStaticFriction(0.8);
-	  object0->setMaterial(mat0);
-
-	  ODEBody0->setImageModel(object0);
-	  ODEBody0->createDynamicBox(boxSize, boxSize, boxSize);
-	  ODEBody0->setMass(0.05);
-
-	  ODEBody0->setPosition(cVector3d(0, 0, 0)); */
-
-	// create a virtual mesh
-	object = new cMesh(world);
-
-	// add object to world
-	world->addChild(object);
-
-	// set the position of the object at the center of the world
-	object->setPos(0.0, 0.0, 0.0);
-
-	/////////////////////////////////////////////////////////////////////////
-	// create a cube
-	/////////////////////////////////////////////////////////////////////////
-	const double HALFSIZE = 0.08;
-
-	// face -x
-	vertices[0][0] = object->newVertex(-HALFSIZE,  HALFSIZE, -HALFSIZE); 
-	vertices[0][1] = object->newVertex(-HALFSIZE, -HALFSIZE, -HALFSIZE);
-	vertices[0][2] = object->newVertex(-HALFSIZE, -HALFSIZE,  HALFSIZE);
-	vertices[0][3] = object->newVertex(-HALFSIZE,  HALFSIZE,  HALFSIZE);
-
-	// face +x
-	vertices[1][0] = object->newVertex( HALFSIZE, -HALFSIZE, -HALFSIZE);
-	vertices[1][1] = object->newVertex( HALFSIZE,  HALFSIZE, -HALFSIZE);
-	vertices[1][2] = object->newVertex( HALFSIZE,  HALFSIZE,  HALFSIZE);
-	vertices[1][3] = object->newVertex( HALFSIZE, -HALFSIZE,  HALFSIZE);
-
-	// face -y
-	vertices[2][0] = object->newVertex(-HALFSIZE,  -HALFSIZE, -HALFSIZE);
-	vertices[2][1] = object->newVertex( HALFSIZE,  -HALFSIZE, -HALFSIZE);
-	vertices[2][2] = object->newVertex( HALFSIZE,  -HALFSIZE,  HALFSIZE);
-	vertices[2][3] = object->newVertex(-HALFSIZE,  -HALFSIZE,  HALFSIZE);
-
-	// face +y
-	vertices[3][0] = object->newVertex( HALFSIZE,   HALFSIZE, -HALFSIZE);
-	vertices[3][1] = object->newVertex(-HALFSIZE,   HALFSIZE, -HALFSIZE);
-	vertices[3][2] = object->newVertex(-HALFSIZE,   HALFSIZE,  HALFSIZE);
-	vertices[3][3] = object->newVertex( HALFSIZE,   HALFSIZE,  HALFSIZE);
-
-	// face -z
-	vertices[4][0] = object->newVertex(-HALFSIZE,  -HALFSIZE, -HALFSIZE);
-	vertices[4][1] = object->newVertex(-HALFSIZE,   HALFSIZE, -HALFSIZE);
-	vertices[4][2] = object->newVertex( HALFSIZE,   HALFSIZE, -HALFSIZE);
-	vertices[4][3] = object->newVertex( HALFSIZE,  -HALFSIZE, -HALFSIZE);
-
-	// face +z
-	vertices[5][0] = object->newVertex( HALFSIZE,  -HALFSIZE,  HALFSIZE);
-	vertices[5][1] = object->newVertex( HALFSIZE,   HALFSIZE,  HALFSIZE);
-	vertices[5][2] = object->newVertex(-HALFSIZE,   HALFSIZE,  HALFSIZE);
-	vertices[5][3] = object->newVertex(-HALFSIZE,  -HALFSIZE,  HALFSIZE);
-
-	// create a texture
-	texture = new cTexture2D();
-	object->setTexture(texture);
-	object->setUseTexture(true);
-
-	// set material properties to light gray
-	object->m_material.m_ambient.set(0.5f, 0.5f, 0.5f, 1.0f);
-	object->m_material.m_diffuse.set(0.7f, 0.7f, 0.7f, 1.0f);
-	object->m_material.m_specular.set(1.0f, 1.0f, 1.0f, 1.0f);
-	object->m_material.m_emission.set(0.0f, 0.0f, 0.0f, 1.0f);
-
-	// compute normals
-	object->computeAllNormals();
-
-	// display triangle normals
-	object->setShowNormals(true);
-
-	// set length and color of normals
-	object->setNormalsProperties(0.1, cColorf(1.0, 0.0, 0.0), true);
-
-	// compute a boundary box
-	object->computeBoundaryBox(true);
-
-	// get dimensions of object
-	double size = cSub(object->getBoundaryMax(), object->getBoundaryMin()).length();
-
-	// resize object to screen
-	object->scale( 2.0 * tool->getWorkspaceRadius() / size);
-
-	// compute collision detection algorithm
-	object->createAABBCollisionDetector(1.01 * proxyRadius, true, false);
-
-	// define a default stiffness for the object
-	object->setStiffness(stiffnessMax, true);
-
-	// define friction properties
-	object->setFriction(0.2, 0.5, true);
-
     }
-    // here we define the material properties of the cursor when the
-    // user button of the device end-effector is engaged (ON) or released (OFF)
 
-    // a light orange material color
-    matCursorButtonOFF.m_ambient.set(0.5, 0.2, 0.0);
-    matCursorButtonOFF.m_diffuse.set(1.0, 0.5, 0.0);
-    matCursorButtonOFF.m_specular.set(1.0, 1.0, 1.0);
+    // create a 3D tool and add it to the world
+    tool = new cGeneric3dofPointer(world);
+    world->addChild(tool);
 
-    // a blue material color
-    matCursorButtonON.m_ambient.set(0.1, 0.1, 0.4);
-    matCursorButtonON.m_diffuse.set(0.3, 0.3, 0.8);
-    matCursorButtonON.m_specular.set(1.0, 1.0, 1.0);
+    // connect the haptic device to the tool
+    tool->setHapticDevice(hapticDevice);
+
+    // initialize tool by connecting to haptic device
+    tool->start();
+
+    // map the physical workspace of the haptic device to a larger virtual workspace.
+    tool->setWorkspaceRadius(1.0);
+
+    // define a radius for the tool (graphical display)
+    tool->setRadius(0.05);
+
+    // hide the device sphere. only show proxy.
+    tool->m_deviceSphere->setShowEnabled(false);
+
+    // set the physical readius of the proxy.
+    proxyRadius = 0.05;
+    tool->m_proxyPointForceModel->setProxyRadius(proxyRadius);
+    tool->m_proxyPointForceModel->m_collisionSettings.m_checkBothSidesOfTriangles = false;
+
+    // enable if objects in the scene are going to rotate of translate
+    // or possibly collide against the tool. If the environment
+    // is entirely static, you can set this parameter to "false"
+    tool->m_proxyPointForceModel->m_useDynamicProxy = true;
+
+    // read the scale factor between the physical workspace of the haptic
+    // device and the virtual workspace defined for the tool
+    double workspaceScaleFactor = tool->getWorkspaceScaleFactor();
+
+    // define a maximum stiffness that can be handled by the current
+    // haptic device. The value is scaled to take into account the
+    // workspace scale factor
+    double stiffnessMax = info.m_maxForceStiffness / workspaceScaleFactor;
+
+
+    //-----------------------------------------------------------------------
+    // COMPOSE THE VIRTUAL SCENE
+    //-----------------------------------------------------------------------
+
+    // create a virtual mesh
+    object = new cMesh(world);
+
+    // add object to world
+    world->addChild(object);
+
+    // set the position of the object at the center of the world
+    object->setPos(0.0, 0.0, 0.0);
+
+
+    /////////////////////////////////////////////////////////////////////////
+    // create a cube
+    /////////////////////////////////////////////////////////////////////////
+    const double HALFSIZE = 0.08;
+
+    // face -x
+    vertices[0][0] = object->newVertex(-HALFSIZE,  HALFSIZE, -HALFSIZE);
+    vertices[0][1] = object->newVertex(-HALFSIZE, -HALFSIZE, -HALFSIZE);
+    vertices[0][2] = object->newVertex(-HALFSIZE, -HALFSIZE,  HALFSIZE);
+    vertices[0][3] = object->newVertex(-HALFSIZE,  HALFSIZE,  HALFSIZE);
+
+    // face +x
+    vertices[1][0] = object->newVertex( HALFSIZE, -HALFSIZE, -HALFSIZE);
+    vertices[1][1] = object->newVertex( HALFSIZE,  HALFSIZE, -HALFSIZE);
+    vertices[1][2] = object->newVertex( HALFSIZE,  HALFSIZE,  HALFSIZE);
+    vertices[1][3] = object->newVertex( HALFSIZE, -HALFSIZE,  HALFSIZE);
+
+    // face -y
+    vertices[2][0] = object->newVertex(-HALFSIZE,  -HALFSIZE, -HALFSIZE);
+    vertices[2][1] = object->newVertex( HALFSIZE,  -HALFSIZE, -HALFSIZE);
+    vertices[2][2] = object->newVertex( HALFSIZE,  -HALFSIZE,  HALFSIZE);
+    vertices[2][3] = object->newVertex(-HALFSIZE,  -HALFSIZE,  HALFSIZE);
+
+    // face +y
+    vertices[3][0] = object->newVertex( HALFSIZE,   HALFSIZE, -HALFSIZE);
+    vertices[3][1] = object->newVertex(-HALFSIZE,   HALFSIZE, -HALFSIZE);
+    vertices[3][2] = object->newVertex(-HALFSIZE,   HALFSIZE,  HALFSIZE);
+    vertices[3][3] = object->newVertex( HALFSIZE,   HALFSIZE,  HALFSIZE);
+
+    // face -z
+    vertices[4][0] = object->newVertex(-HALFSIZE,  -HALFSIZE, -HALFSIZE);
+    vertices[4][1] = object->newVertex(-HALFSIZE,   HALFSIZE, -HALFSIZE);
+    vertices[4][2] = object->newVertex( HALFSIZE,   HALFSIZE, -HALFSIZE);
+    vertices[4][3] = object->newVertex( HALFSIZE,  -HALFSIZE, -HALFSIZE);
+
+    // face +z
+    vertices[5][0] = object->newVertex( HALFSIZE,  -HALFSIZE,  HALFSIZE);
+    vertices[5][1] = object->newVertex( HALFSIZE,   HALFSIZE,  HALFSIZE);
+    vertices[5][2] = object->newVertex(-HALFSIZE,   HALFSIZE,  HALFSIZE);
+    vertices[5][3] = object->newVertex(-HALFSIZE,  -HALFSIZE,  HALFSIZE);
+
+    // create triangles
+    for (int i=0; i<6; i++)
+    {
+        object->newTriangle(vertices[i][0], vertices[i][1], vertices[i][2]);
+        object->newTriangle(vertices[i][0], vertices[i][2], vertices[i][3]);
+    }
+
+    // create a texture
+    texture = new cTexture2D();
+    object->setTexture(texture);
+    object->setUseTexture(true);
+
+    // set material properties to light gray
+    object->m_material.m_ambient.set(0.5f, 0.5f, 0.5f, 1.0f);
+    object->m_material.m_diffuse.set(0.7f, 0.7f, 0.7f, 1.0f);
+    object->m_material.m_specular.set(1.0f, 1.0f, 1.0f, 1.0f);
+    object->m_material.m_emission.set(0.0f, 0.0f, 0.0f, 1.0f);
+
+    // compute normals
+    object->computeAllNormals();
+
+    // display triangle normals
+    object->setShowNormals(true);
+
+    // set length and color of normals
+    object->setNormalsProperties(0.1, cColorf(1.0, 0.0, 0.0), true);
+
+    // compute a boundary box
+    object->computeBoundaryBox(true);
+
+    // get dimensions of object
+    double size = cSub(object->getBoundaryMax(), object->getBoundaryMin()).length();
+
+    // resize object to screen
+    object->scale( 2.0 * tool->getWorkspaceRadius() / size);
+
+    // compute collision detection algorithm
+    object->createAABBCollisionDetector(1.01 * proxyRadius, true, false);
+
+    // define a default stiffness for the object
+    object->setStiffness(stiffnessMax, true);
+
+    // define friction properties
+    object->setFriction(0.2, 0.5, true);
+    cShapeLine *rightLine = new cShapeLine(cVector3d(0, 0.02, 1),cVector3d(0, 0.02, -1));
+    cShapeLine *leftLine = new cShapeLine(cVector3d(0, -0.02, 1),cVector3d(0, -0.02, -1));
+    cShapeLine *topLine = new cShapeLine(cVector3d(0, -1, 0.02),cVector3d(0, 1, 0.02));
+    cShapeLine *bottomLine = new cShapeLine(cVector3d(0, -1, -0.02),cVector3d(0, 1, -0.02));
+    world->addChild(rightLine);
+    world->addChild(leftLine);
+    world->addChild(topLine);
+    world->addChild(bottomLine);
 
 
     //-----------------------------------------------------------------------
@@ -462,6 +454,34 @@ void resizeWindow(int w, int h)
     displayW = w;
     displayH = h;
     glViewport(0, 0, displayW, displayH);
+
+    // update texture coordinates
+    double txMin, txMax, tyMin, tyMax;
+    if (displayW >= displayH)
+    {
+        double ratio = (double)displayW / (double)displayH;
+        txMin = 0.5 * (ratio - 1.0) / ratio;
+        txMax = 1.0 - txMin;
+        tyMin = 0.0;
+        tyMax = 1.0;
+    }
+    else
+    {
+        double ratio = (double)displayH / (double)displayW;
+        txMin = 0.0;
+        txMax = 1.0;
+        tyMin = 0.5 * (ratio - 1.0) / ratio;
+        tyMax = 1.0 - tyMin;
+    }
+
+    // update texture coordinates
+    for (int i=0; i<6; i++)
+    {
+        object->getVertex(vertices[i][0])->setTexCoord(txMin, tyMin);
+        object->getVertex(vertices[i][1])->setTexCoord(txMax, tyMin);
+        object->getVertex(vertices[i][2])->setTexCoord(txMax, tyMax);
+        object->getVertex(vertices[i][3])->setTexCoord(txMin, tyMax);
+    }
 }
 
 //---------------------------------------------------------------------------
@@ -507,11 +527,7 @@ void close(void)
     // wait for graphics and haptics loops to terminate
     while (!simulationFinished) { cSleepMs(100); }
 
-    // close the haptic devices
-    if (hapticDevice)
-    {
-        hapticDevice->close();
-    }
+    // close haptic device
     tool->stop();
 }
 
@@ -519,23 +535,12 @@ void close(void)
 
 void updateGraphics(void)
 {
-    // update the label showing the position of the haptic device
-    if (cursor)
-    {
-        cVector3d position = cursor->getPos() * 1000.0; // convert to mm
-        char buffer[128];
-        sprintf(buffer, "device position: (%.2lf, %.2lf, %.2lf) mm",
-            position.x, position.y, position.z);
-        positionLabel->m_string = buffer;
-    }
-
-    // update the label with the haptic refresh rate
-    char buffer[128];
-    sprintf(buffer, "haptic rate: %.0lf Hz", rateEstimate);
-    rateLabel->m_string = buffer;
-
     // render world
     camera->renderView(displayW, displayH);
+
+    // copy output data to texture
+    camera->copyImageData(&texture->m_image);
+    texture->markForUpdate();
 
     // Swap buffers
     glutSwapBuffers();
@@ -556,138 +561,105 @@ void updateGraphics(void)
 
 void updateHaptics(void)
 {
-    // a clock to estimate the haptic simulation loop update rate
-    cPrecisionClock pclock;
-    pclock.setTimeoutPeriodSeconds(1.0);
-    pclock.start(true);
-    cPrecisionClock clock;
-    clock.start(true);
-    int counter = 0;
+    // reset clock
+    simClock.reset();
 
     // main haptic simulation loop
     while(simulationRunning)
     {
-		if (!hapticDevice) continue;
-		
-        // read position of haptic device
-        cVector3d newPosition;
-        hapticDevice->getPosition(newPosition);
+        // compute global reference frames for each object
+        world->computeGlobalPositions(true);
 
-        // update position and orientation of cursor
-        cursor->setPos(newPosition);
+        // update position and orientation of tool
+        tool->updatePose();
 
-        // read linear velocity from device
-        cVector3d linearVelocity;
-        hapticDevice->getLinearVelocity(linearVelocity);
+        // compute interaction forces
+        tool->computeInteractionForces();
 
-        // update the line showing velocity
-        velocityVector->m_pointA = newPosition;
-        velocityVector->m_pointB = newPosition + linearVelocity;
+        // send forces to device
+        tool->applyForces();
 
-        // read user button status
-        bool buttonStatus;
-        hapticDevice->getUserSwitch(0, buttonStatus);
+        // stop the simulation clock
+        simClock.stop();
 
-        // adjust the color of the cursor according to the status of
-        // the user switch (ON = TRUE / OFF = FALSE)
-	//        cursor->m_material = buttonStatus ? matCursorButtonON : matCursorButtonOFF;
-        cursor->m_material = newPosition[1] > 0.02 ? matCursorButtonON : matCursorButtonOFF;
+        // read the time increment in seconds
+        double timeInterval = simClock.getCurrentTimeSeconds();
 
-        // compute a reaction force (a spring that pulls the device to the origin)
-	const double stiffness = 100.0; // [N/m]
-        cVector3d force = cVector3d(0, 0, 0);
-	const double WALL_FORCE = 10000.0;
+        // restart the simulation clock
+        simClock.reset();
+        simClock.start();
 
-	if(newPosition.y > 0.02) {
-	  force.y = -WALL_FORCE * (newPosition.y -0.02);
-	}
-	if(newPosition.y < -0.02) {
-	  force.y = -WALL_FORCE * (newPosition.y +0.02);
-	}
-	if(newPosition.z > 0.02) {
-	  force.z = -WALL_FORCE * (newPosition.z -0.02);
-	}
-	if(newPosition.z < -0.02) {
-	  force.z = -WALL_FORCE * (newPosition.z + 0.02);
-	}
+        // temp variable to compute rotational acceleration
+        cVector3d rotAcc(0,0,0);
 
+        // check if tool is touching an object
+        cGenericObject* objectContact = tool->m_proxyPointForceModel->m_contactPoint0->m_object;
+        if (objectContact != NULL)
+        {
+            // retrieve the root of the object mesh
+            cGenericObject* obj = objectContact->getSuperParent();
 
-        // send computed force to haptic device
-        hapticDevice->setForce(force);
+            // get position of cursor in global coordinates
+            cVector3d toolPos = tool->m_deviceGlobalPos;
 
-        // estimate the refresh rate
-        ++counter;
-        if (pclock.timeoutOccurred()) {
-            pclock.stop();
-            rateEstimate = counter;
-            counter = 0;
-            pclock.start(true);
+            // get position of object in global coordinates
+            cVector3d objectPos = obj->getGlobalPos();
+
+            // compute a vector from the center of mass of the object (point of rotation) to the tool
+            cVector3d vObjectCMToTool = cSub(toolPos, objectPos);
+
+            // compute acceleration based on the interaction forces
+            // between the tool and the object
+            if (vObjectCMToTool.length() > 0.0)
+            {
+                // get the last force applied to the cursor in global coordinates
+                // we negate the result to obtain the opposite force that is applied on the
+                // object
+                cVector3d toolForce = cNegate(tool->m_lastComputedGlobalForce);
+
+                // compute effective force to take into account the fact the object
+                // can only rotate around a its center mass and not translate
+                cVector3d effectiveForce = toolForce - cProject(toolForce, vObjectCMToTool);
+
+                // compute the resulting torque
+                cVector3d torque = cMul(vObjectCMToTool.length(), cCross( cNormalize(vObjectCMToTool), effectiveForce));
+
+                // update rotational acceleration
+                const double OBJECT_INERTIA = 0.4;
+                rotAcc = (1.0 / OBJECT_INERTIA) * torque;
+            }
+        }
+
+        // update rotational velocity
+        rotVel.add(timeInterval * rotAcc);
+
+        // set a threshold on the rotational velocity term
+        const double ROT_VEL_MAX = 10.0;
+        double velMag = rotVel.length();
+        if (velMag > ROT_VEL_MAX)
+        {
+            rotVel.mul(ROT_VEL_MAX / velMag);
+        }
+
+        // add some damping too
+        const double DAMPING_GAIN = 0.1;
+        rotVel.mul(1.0 - DAMPING_GAIN * timeInterval);
+
+        // if user switch is pressed, set velocity to zero
+        if (tool->getUserSwitch(0) == 1)
+        {
+            rotVel.zero();
+        }
+
+        // compute the next rotation configuration of the object
+        if (rotVel.length() > CHAI_SMALL)
+        {
+            object->rotate(cNormalize(rotVel), timeInterval * rotVel.length());
         }
     }
     
     // exit haptics thread
     simulationFinished = true;
 }
-void createCube(cMesh* a_mesh, double a_size)
-{
-    const double HALFSIZE = a_size / 2.0;
-    int vertices [6][6];
 
-    // face -x
-    vertices[0][0] = a_mesh->newVertex(-HALFSIZE,  HALFSIZE, -HALFSIZE);
-    vertices[0][1] = a_mesh->newVertex(-HALFSIZE, -HALFSIZE, -HALFSIZE);
-    vertices[0][2] = a_mesh->newVertex(-HALFSIZE, -HALFSIZE,  HALFSIZE);
-    vertices[0][3] = a_mesh->newVertex(-HALFSIZE,  HALFSIZE,  HALFSIZE);
-
-    // face +x
-    vertices[1][0] = a_mesh->newVertex( HALFSIZE, -HALFSIZE, -HALFSIZE);
-    vertices[1][1] = a_mesh->newVertex( HALFSIZE,  HALFSIZE, -HALFSIZE);
-    vertices[1][2] = a_mesh->newVertex( HALFSIZE,  HALFSIZE,  HALFSIZE);
-    vertices[1][3] = a_mesh->newVertex( HALFSIZE, -HALFSIZE,  HALFSIZE);
-
-    // face -y
-    vertices[2][0] = a_mesh->newVertex(-HALFSIZE,  -HALFSIZE, -HALFSIZE);
-    vertices[2][1] = a_mesh->newVertex( HALFSIZE,  -HALFSIZE, -HALFSIZE);
-    vertices[2][2] = a_mesh->newVertex( HALFSIZE,  -HALFSIZE,  HALFSIZE);
-    vertices[2][3] = a_mesh->newVertex(-HALFSIZE,  -HALFSIZE,  HALFSIZE);
-
-    // face +y
-    vertices[3][0] = a_mesh->newVertex( HALFSIZE,   HALFSIZE, -HALFSIZE);
-    vertices[3][1] = a_mesh->newVertex(-HALFSIZE,   HALFSIZE, -HALFSIZE);
-    vertices[3][2] = a_mesh->newVertex(-HALFSIZE,   HALFSIZE,  HALFSIZE);
-    vertices[3][3] = a_mesh->newVertex( HALFSIZE,   HALFSIZE,  HALFSIZE);
-
-    // face -z
-    vertices[4][0] = a_mesh->newVertex(-HALFSIZE,  -HALFSIZE, -HALFSIZE);
-    vertices[4][1] = a_mesh->newVertex(-HALFSIZE,   HALFSIZE, -HALFSIZE);
-    vertices[4][2] = a_mesh->newVertex( HALFSIZE,   HALFSIZE, -HALFSIZE);
-    vertices[4][3] = a_mesh->newVertex( HALFSIZE,  -HALFSIZE, -HALFSIZE);
-
-    // face +z
-    vertices[5][0] = a_mesh->newVertex( HALFSIZE,  -HALFSIZE,  HALFSIZE);
-    vertices[5][1] = a_mesh->newVertex( HALFSIZE,   HALFSIZE,  HALFSIZE);
-    vertices[5][2] = a_mesh->newVertex(-HALFSIZE,   HALFSIZE,  HALFSIZE);
-    vertices[5][3] = a_mesh->newVertex(-HALFSIZE,  -HALFSIZE,  HALFSIZE);
-
-    // create triangles
-    for (int i=0; i<6; i++)
-    {
-    a_mesh->newTriangle(vertices[i][0], vertices[i][1], vertices[i][2]);
-    a_mesh->newTriangle(vertices[i][0], vertices[i][2], vertices[i][3]);
-    }
-
-    // set material properties to light gray
-    a_mesh->m_material.m_ambient.set(0.5f, 0.5f, 0.5f, 1.0f);
-    a_mesh->m_material.m_diffuse.set(0.7f, 0.7f, 0.7f, 1.0f);
-    a_mesh->m_material.m_specular.set(1.0f, 1.0f, 1.0f, 1.0f);
-    a_mesh->m_material.m_emission.set(0.0f, 0.0f, 0.0f, 1.0f);
-
-    // compute normals
-    a_mesh->computeAllNormals();
-
-    // compute collision detection algorithm
-    a_mesh->createAABBCollisionDetector(1.01 * proxyRadius, true, false);
-}
- 
 //---------------------------------------------------------------------------
-

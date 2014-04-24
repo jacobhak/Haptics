@@ -831,6 +831,10 @@ math/CString.h
 /afs/nada.kth.se/home/d/u1cfva1d/kurser/haptik/chai3d-2.1.0/src/widgets/math/CString.h
 
 /afs/nada.kth.se/home/d/u1cfva1d/kurser/haptik/project/MyProgram.cpp
+assert.h
+-
+math.h
+-
 stdio.h
 -
 stdlib.h
