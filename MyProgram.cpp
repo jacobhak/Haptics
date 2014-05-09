@@ -80,7 +80,7 @@ int vertices[6][4];
 cTexture2D* texture;
 
 // rotational velocity of the object
-cVector3d rotVel(0.0, 0.1, 0.1);
+cVector3d rotVel(0.0, 0.0, 0.0);
 
 // status of the main simulation haptics loop
 bool simulationRunning = false;
@@ -93,6 +93,9 @@ string resourceRoot;
 
 // has exited haptics simulation thread
 bool simulationFinished = false;
+
+std::vector <cShapeLine *> horizontalLines;
+std::vector <cShapeLine *> verticalLines;
 
 //---------------------------------------------------------------------------
 // DECLARED MACROS
@@ -296,13 +299,13 @@ int main(int argc, char* argv[])
     world->addChild(object);
 
     // set the position of the object at the center of the world
-    object->setPos(0.0, 0.0, 0.0);
+    object->setPos(0.0, 0.0, -0.5);
 
 
     /////////////////////////////////////////////////////////////////////////
     // create a cube
     /////////////////////////////////////////////////////////////////////////
-    const double HALFSIZE = 0.08;
+    const double HALFSIZE = 0.01;
 
     // face -x
     vertices[0][0] = object->newVertex(-HALFSIZE,  HALFSIZE, -HALFSIZE);
@@ -365,16 +368,17 @@ int main(int argc, char* argv[])
     object->setShowNormals(true);
 
     // set length and color of normals
-    object->setNormalsProperties(0.1, cColorf(1.0, 0.0, 0.0), true);
+    object->setNormalsProperties(0.1, cColorf(0.0, 1.0, 0.0), true);
 
     // compute a boundary box
     object->computeBoundaryBox(true);
 
     // get dimensions of object
     double size = cSub(object->getBoundaryMax(), object->getBoundaryMin()).length();
-
+    
     // resize object to screen
-    object->scale( 2.0 * tool->getWorkspaceRadius() / size);
+    object->scale( 0.2 * tool->getWorkspaceRadius() / size);
+
 
     // compute collision detection algorithm
     object->createAABBCollisionDetector(1.01 * proxyRadius, true, false);
@@ -384,14 +388,20 @@ int main(int argc, char* argv[])
 
     // define friction properties
     object->setFriction(0.2, 0.5, true);
-    cShapeLine *rightLine = new cShapeLine(cVector3d(0, 0.02, 1),cVector3d(0, 0.02, -1));
-    cShapeLine *leftLine = new cShapeLine(cVector3d(0, -0.02, 1),cVector3d(0, -0.02, -1));
-    cShapeLine *topLine = new cShapeLine(cVector3d(0, -1, 0.02),cVector3d(0, 1, 0.02));
-    cShapeLine *bottomLine = new cShapeLine(cVector3d(0, -1, -0.02),cVector3d(0, 1, -0.02));
+    double workspace = tool->getWorkspaceRadius();
+    cShapeLine *rightLine = new cShapeLine(cVector3d(0, 0.5, 1),cVector3d(0, 0.5, -1));
+    cShapeLine *leftLine = new cShapeLine(cVector3d(0, -0.8 * workspace, 1),cVector3d(0, -0.8 * workspace, -1));
+    cShapeLine *topLine = new cShapeLine(cVector3d(0, -1, 0.8 * workspace),cVector3d(0, 1, 0.8 * workspace));
+    cShapeLine *bottomLine = new cShapeLine(cVector3d(0, -1, -0.5),cVector3d(0, 1, -0.5));
     world->addChild(rightLine);
     world->addChild(leftLine);
     world->addChild(topLine);
     world->addChild(bottomLine);
+    
+    verticalLines.push_back(rightLine);
+    verticalLines.push_back(leftLine);
+    horizontalLines.push_back(bottomLine);
+    horizontalLines.push_back(topLine);
 
 
     //-----------------------------------------------------------------------
@@ -588,7 +598,14 @@ void updateHaptics(void)
         // restart the simulation clock
         simClock.reset();
         simClock.start();
-
+	//	new cShapeLine(cVector3d(0, 0.8 * workspace, 1),cVector3d(0, 0.8 * workspace, -1));
+	double workspace = tool->getWorkspaceRadius();
+	cVector3d toolPos = tool->m_deviceGlobalPos;
+	cVector3d force = cVector3d(0,0,0);
+	if (toolPos.x < 0.0) {
+	  force.x = -50 * toolPos.x;
+	}
+	tool->getHapticDevice()->setForce(force);
         // temp variable to compute rotational acceleration
         cVector3d rotAcc(0,0,0);
 
@@ -619,19 +636,41 @@ void updateHaptics(void)
 
                 // compute effective force to take into account the fact the object
                 // can only rotate around a its center mass and not translate
-                cVector3d effectiveForce = toolForce - cProject(toolForce, vObjectCMToTool);
+                //cVector3d effectiveForce = toolForce - cProject(toolForce, vObjectCMToTool);
 
                 // compute the resulting torque
-                cVector3d torque = cMul(vObjectCMToTool.length(), cCross( cNormalize(vObjectCMToTool), effectiveForce));
+                //cVector3d torque =  0.5;//cMul(vObjectCMToTool.length(), cCross( cNormalize(vObjectCMToTool), effectiveForce));
 
                 // update rotational acceleration
                 const double OBJECT_INERTIA = 0.4;
-                rotAcc = (1.0 / OBJECT_INERTIA) * torque;
+                rotAcc = (1.0 / OBJECT_INERTIA) * toolForce;
             }
+	    double newZ = objectPos.z;
+	    double newY = objectPos.y;
+
+	    for(int i = 0; i < verticalLines.size(); i++) {
+	      double point = verticalLines[i]->m_pointA.y;
+	    if(objectPos.y < point + 0.01 &&
+			      objectPos.y > point - 0.01) {
+	      newZ = objectPos.z + rotAcc.z * timeInterval;
+	      }
+	      
+	    }
+	    for(int i = 0; i < horizontalLines.size(); i++) {
+	      double point = horizontalLines[i]->m_pointA.z;
+	      if(objectPos.z < point + 0.01 &&
+			      objectPos.z > point - 0.01) {
+	        newY = objectPos.y + rotAcc.y * timeInterval;
+	      }
+	      
+	    }
+	    cVector3d newPos(objectPos.x, newY, newZ);
+	    
+	    object->setPos(newPos);
         }
 
         // update rotational velocity
-        rotVel.add(timeInterval * rotAcc);
+        //rotVel.add(timeInterval * rotAcc);
 
         // set a threshold on the rotational velocity term
         const double ROT_VEL_MAX = 10.0;
@@ -654,7 +693,8 @@ void updateHaptics(void)
         // compute the next rotation configuration of the object
         if (rotVel.length() > CHAI_SMALL)
         {
-            object->rotate(cNormalize(rotVel), timeInterval * rotVel.length());
+	  // object->setPos(obj->getGlobalPos().add(rotVel));
+	  //   object->rotate(cNormalize(rotVel), timeInterval * rotVel.length());
         }
     }
     
